@@ -335,71 +335,84 @@ def remove_underscore_dict(d):
     return {key[1:] if key.startswith("_") else key: value for key, value in d.items()}
 
 
-def main(params):
-    if len(params.ar_steps) == 1:
-        params.ar_steps = params.ar_steps[0]
-        ar_steps = params.ar_steps
+def main(
+    ar_steps: list,
+    final_time: float,
+    initial_time: float,
+    model_path: str,
+    data_path: str,
+    dataset: str,
+    batch_size: int,
+    mode: str,
+    file: str,
+    save_n_samples: int,
+    resolutions: int,
+    wandb_project: str,
+    wandb_entity: str,
+    wandb_sweep_id: str,
+    ckpt_dir: str,
+    exclude_dataset: str,
+    exclusively_evaluate_dataset: str,
+    just_velocities: bool,
+    allow_failed: bool,
+    append_time: bool,
+    num_trajectories: int,
+    full_data: bool,
+):
+    if len(ar_steps) == 1:
+        ar_steps = ar_steps[0]
+        ar_steps = ar_steps
     else:
-        ar_steps = params.ar_steps
-        params.ar_steps = [
-            step / (params.final_time - params.initial_time) for step in params.ar_steps
-        ]
+        ar_steps = ar_steps
+        ar_steps = [step / (final_time - initial_time) for step in ar_steps]
     dataset_kwargs = {}
-    if params.just_velocities:
+    if just_velocities:
         dataset_kwargs["just_velocities"] = True
-    if params.mode == "save_samples":
+    if mode == "save_samples":
         dataset = get_test_set(
-            params.dataset,
-            params.data_path,
-            params.initial_time,
-            params.final_time,
+            dataset,
+            data_path,
+            initial_time,
+            final_time,
             dataset_kwargs,
         )
-        trainer = get_trainer(params.model_path, params.batch_size, dataset)
-        inputs = get_first_n_inputs(dataset, params.save_n_samples)
-        outputs, labels, _ = rollout(trainer, dataset, ar_steps=params.ar_steps)
+        trainer = get_trainer(model_path, batch_size, dataset)
+        inputs = get_first_n_inputs(dataset, save_n_samples)
+        outputs, labels, _ = rollout(trainer, dataset, ar_steps=ar_steps)
         np.save(
-            params.file + "/" + params.dataset.replace(".", "-") + "/" + "inputs.npy",
+            file + "/" + dataset.replace(".", "-") + "/" + "inputs.npy",
             inputs.cpu().numpy(),
         )
         np.save(
-            params.file + "/" + params.dataset.replace(".", "-") + "/" + "labels.npy",
-            labels[: params.save_n_samples],
+            file + "/" + dataset.replace(".", "-") + "/" + "labels.npy",
+            labels[:save_n_samples],
         )
         np.save(
-            params.file + "/" + params.dataset.replace(".", "-") + "/" + "outputs.npy",
-            outputs[: params.save_n_samples],
+            file + "/" + dataset.replace(".", "-") + "/" + "outputs.npy",
+            outputs[:save_n_samples],
         )
-    elif params.mode == "save_samples_sweep":
+    elif mode == "save_samples_sweep":
         api = wandb.Api()
-        sweep = api.sweep(
-            params.wandb_entity
-            + "/"
-            + params.wandb_project
-            + "/"
-            + params.wandb_sweep_id
-        )
+        sweep = api.sweep(wandb_entity + "/" + wandb_project + "/" + wandb_sweep_id)
         for run in sweep.runs:
-            if run.state == "finished" or (
-                params.allow_failed and run.state == "failed"
-            ):
+            if run.state == "finished" or (allow_failed and run.state == "failed"):
                 dset_name = run.config["dataset"]
-                if run.config["num_trajectories"] != params.num_trajectories:
+                if run.config["num_trajectories"] != num_trajectories:
                     continue
-                if dset_name in params.exclude_dataset:
+                if dset_name in exclude_dataset:
                     continue
                 if (
-                    len(params.exclusively_evaluate_dataset) > 0
-                    and dset_name not in params.exclusively_evaluate_dataset
+                    len(exclusively_evaluate_dataset) > 0
+                    and dset_name not in exclusively_evaluate_dataset
                 ):
                     continue
                 num_trajectories = run.config["num_trajectories"]
                 ckpt_dir = (
-                    params.ckpt_dir
+                    ckpt_dir
                     + "/"
-                    + params.wandb_project
+                    + wandb_project
                     + "/"
-                    + params.wandb_sweep_id
+                    + wandb_sweep_id
                     + "/"
                     + run.name
                 )
@@ -417,32 +430,32 @@ def main(params):
                 model_path = os.path.join(ckpt_dir, dirs[0])
                 dataset = get_test_set(
                     dset_name,
-                    params.data_path,
-                    params.initial_time,
-                    params.final_time,
+                    data_path,
+                    initial_time,
+                    final_time,
                     dataset_kwargs,
                 )
-                trainer = get_trainer(model_path, params.batch_size, dataset)
-                inputs = get_first_n_inputs(dataset, params.save_n_samples)
-                outputs, labels, _ = rollout(trainer, dataset, ar_steps=params.ar_steps)
-                if not os.path.exists(params.file + "/" + dset_name.replace(".", "-")):
-                    os.makedirs(params.file + "/" + dset_name.replace(".", "-"))
+                trainer = get_trainer(model_path, batch_size, dataset)
+                inputs = get_first_n_inputs(dataset, save_n_samples)
+                outputs, labels, _ = rollout(trainer, dataset, ar_steps=ar_steps)
+                if not os.path.exists(file + "/" + dset_name.replace(".", "-")):
+                    os.makedirs(file + "/" + dset_name.replace(".", "-"))
                 if not os.path.exists(
-                    params.file
+                    file
                     + "/"
                     + dset_name.replace(".", "-")
                     + "/"
                     + str(num_trajectories)
                 ):
                     os.makedirs(
-                        params.file
+                        file
                         + "/"
                         + dset_name.replace(".", "-")
                         + "/"
                         + str(num_trajectories)
                     )
                 np.save(
-                    params.file
+                    file
                     + "/"
                     + dset_name.replace(".", "-")
                     + "/"
@@ -451,86 +464,78 @@ def main(params):
                     inputs.cpu().numpy(),
                 )
                 np.save(
-                    params.file
+                    file
                     + "/"
                     + dset_name.replace(".", "-")
                     + "/"
                     + str(num_trajectories)
                     + "/labels.npy",
-                    labels[: params.save_n_samples],
+                    labels[:save_n_samples],
                 )
                 np.save(
-                    params.file
+                    file
                     + "/"
                     + dset_name.replace(".", "-")
                     + "/"
                     + str(num_trajectories)
                     + "/"
                     + "outputs.npy",
-                    outputs[: params.save_n_samples],
+                    outputs[:save_n_samples],
                 )
     else:
-        if params.mode == "eval":
+        if mode == "eval":
             dataset = get_test_set(
-                params.dataset,
-                params.data_path,
-                params.initial_time,
-                params.final_time,
+                dataset,
+                data_path,
+                initial_time,
+                final_time,
                 dataset_kwargs,
             )
             trainer = get_trainer(
-                params.model_path,
-                params.batch_size,
+                model_path,
+                batch_size,
                 dataset,
-                full_data=params.full_data,
+                full_data=full_data,
             )
             _, _, metrics = rollout(
                 trainer,
                 dataset,
-                ar_steps=params.ar_steps,
+                ar_steps=ar_steps,
                 output_all_steps=False,
             )
             data = {
-                "dataset": params.dataset,
-                "initial_time": params.initial_time,
-                "final_time": params.final_time,
+                "dataset": dataset,
+                "initial_time": initial_time,
+                "final_time": final_time,
                 "ar_steps": ar_steps,
                 **metrics,
             }
             data = [remove_underscore_dict(data)]
-        elif params.mode == "eval_sweep":
+        elif mode == "eval_sweep":
             api = wandb.Api()
-            sweep = api.sweep(
-                params.wandb_entity
-                + "/"
-                + params.wandb_project
-                + "/"
-                + params.wandb_sweep_id
-            )
+            sweep = api.sweep(wandb_entity + "/" + wandb_project + "/" + wandb_sweep_id)
             data = []
             for run in sweep.runs:
-                if run.state == "finished" or (
-                    params.allow_failed and run.state == "failed"
-                ):
+                if run.state == "finished" or (allow_failed and run.state == "failed"):
                     dset_name = (
                         run.config["dataset"]
-                        if not params.append_time
+                        if not append_time
                         else run.config["dataset"] + ".time"
                     )
-                    if dset_name in params.exclude_dataset:
+                    if dset_name in exclude_dataset:
                         continue
                     if (
-                        len(params.exclusively_evaluate_dataset) > 0
-                        and dset_name not in params.exclusively_evaluate_dataset
+                        len(exclusively_evaluate_dataset) > 0
+                        and dset_name not in exclusively_evaluate_dataset
                     ):
                         continue
                     num_trajectories = run.config["num_trajectories"]
                     ckpt_dir = (
-                        params.ckpt_dir
+                        ckpt_dir
                         + "/"
-                        + params.wandb_project
+                        + wandb_project
                         + "/"
-                        + params.wandb_sweep_id
+                        + wandb_sweep_id
                         + "/"
                         + run.name
                     )
@@ -552,21 +557,21 @@ def main(params):
                     model_path = os.path.join(ckpt_dir, dirs[0])
                     dataset = get_test_set(
                         dset_name,
-                        params.data_path,
-                        params.initial_time,
-                        params.final_time,
+                        data_path,
+                        initial_time,
+                        final_time,
                         dataset_kwargs,
                     )
                     trainer = get_trainer(
                         model_path,
-                        params.batch_size,
+                        batch_size,
                         dataset,
-                        full_data=params.full_data,
+                        full_data=full_data,
                     )
                     _, _, metrics = rollout(
                         trainer,
                         dataset,
-                        ar_steps=params.ar_steps,
+                        ar_steps=ar_steps,
                         output_all_steps=False,
                     )
                     data.append(
@@ -574,40 +579,40 @@ def main(params):
                             {
                                 "dataset": dset_name,
                                 "num_trajectories": num_trajectories,
-                                "initial_time": params.initial_time,
-                                "final_time": params.final_time,
+                                "initial_time": initial_time,
+                                "final_time": final_time,
                                 "ar_steps": ar_steps,
                                 **metrics,
                             }
                         )
                     )
-        elif params.mode == "eval_accumulation_error":
+        elif mode == "eval_accumulation_error":
             dataset = get_test_set(
-                params.dataset,
-                params.data_path,
-                params.initial_time,
-                params.final_time,
+                dataset,
+                data_path,
+                initial_time,
+                final_time,
                 dataset_kwargs,
             )
             trainer = get_trainer(
-                params.model_path,
-                params.batch_size,
+                model_path,
+                batch_size,
                 dataset,
                 output_all_steps=True,
-                full_data=params.full_data,
+                full_data=full_data,
             )
             predictions, _, _ = rollout(
                 trainer,
                 dataset,
-                ar_steps=params.ar_steps,
+                ar_steps=ar_steps,
                 output_all_steps=True,
             )
             labels = get_trajectories(
-                params.dataset,
-                params.data_path,
-                params.ar_steps,
-                params.initial_time,
-                params.final_time,
+                dataset,
+                data_path,
+                ar_steps,
+                initial_time,
+                final_time,
                 dataset_kwargs,
             )
 
@@ -677,7 +682,7 @@ def main(params):
                 if dataset.output_dim == 1:
                     relative_error_statistics = relative_error_statistics[0]
                     error_statistics = error_statistics[0]
-                    if params.full_data:
+                    if full_data:
                         relative_error_statistics["relative_full_data"] = (
                             relative_errors[0].tolist()
                         )
@@ -727,7 +732,7 @@ def main(params):
                             error_statistics_[
                                 dataset.printable_channel_description[i] + "/" + key
                             ] = value
-                            if params.full_data:
+                            if full_data:
                                 error_statistics_[
                                     dataset.printable_channel_description[i]
                                     + "/"
@@ -738,7 +743,7 @@ def main(params):
                             error_statistics_[
                                 dataset.printable_channel_description[i] + "/" + key
                             ] = value
-                            if params.full_data:
+                            if full_data:
                                 error_statistics_[
                                     dataset.printable_channel_description[i]
                                     + "/"
@@ -751,49 +756,49 @@ def main(params):
                 metrics = compute_metrics(
                     EvalPrediction(predictions[:, step], labels[:, step].cpu().numpy())
                 )
-                if isinstance(params.ar_steps, int):
-                    delta = (params.final_time - params.initial_time) // params.ar_steps
+                if isinstance(ar_steps, int):
+                    delta = (final_time - initial_time) // ar_steps
                 else:
-                    delta = params.ar_steps[step]
+                    delta = ar_steps[step]
                 data.append(
                     remove_underscore_dict(
                         {
-                            "dataset": params.dataset,
-                            "initial_time": params.initial_time + step * delta,
-                            "final_time": params.initial_time + (step + 1) * delta,
+                            "dataset": dataset,
+                            "initial_time": initial_time + step * delta,
+                            "final_time": initial_time + (step + 1) * delta,
                             **metrics,
                         }
                     )
                 )
-        elif params.mode == "eval_resolutions":
+        elif mode == "eval_resolutions":
             data = []
-            for resolution in params.resolutions:
+            for resolution in resolutions:
                 dataset_kwargs = {"resolution": resolution}
                 dataset = get_test_set(
-                    params.dataset,
-                    params.data_path,
-                    params.initial_time,
-                    params.final_time,
+                    dataset,
+                    data_path,
+                    initial_time,
+                    final_time,
                     dataset_kwargs,
                 )
                 trainer = get_trainer(
-                    params.model_path,
-                    params.batch_size,
+                    model_path,
+                    batch_size,
                     dataset,
-                    full_data=params.full_data,
+                    full_data=full_data,
                 )
                 _, _, metrics = rollout(
                     trainer,
                     dataset,
-                    ar_steps=params.ar_steps,
+                    ar_steps=ar_steps,
                     output_all_steps=False,
                 )
                 data.append(
                     remove_underscore_dict(
                         {
-                            "dataset": params.dataset,
-                            "initial_time": params.initial_time,
-                            "final_time": params.final_time,
+                            "dataset": dataset,
+                            "initial_time": initial_time,
+                            "final_time": final_time,
                             "ar_steps": ar_steps,
                             "resolution": resolution,
                             **metrics,
@@ -801,12 +806,12 @@ def main(params):
                     )
                 )
 
-        if os.path.exists(params.file):
-            df = pd.read_csv(params.file)
+        if os.path.exists(file):
+            df = pd.read_csv(file)
         else:
             df = pd.DataFrame()
         df = pd.concat([df, pd.DataFrame(data)], ignore_index=True)
-        df.to_csv(params.file, index=False)
+        df.to_csv(file, index=False)
 
 
 if __name__ == "__main__":
@@ -953,4 +958,27 @@ if __name__ == "__main__":
     )
     params = parser.parse_args()
 
-    main(params)
+    main(
+        params.ar_steps,
+        params.final_time,
+        params.initial_time,
+        params.model_path,
+        params.data_path,
+        params.dataset,
+        params.batch_size,
+        params.mode,
+        params.file,
+        params.save_n_samples,
+        params.resolutions,
+        params.wandb_project,
+        params.wandb_entity,
+        params.wandb_sweep_id,
+        params.ckpt_dir,
+        params.exclude_dataset,
+        params.exclusively_evaluate_dataset,
+        params.just_velocities,
+        params.allow_failed,
+        params.append_time,
+        params.num_trajectories,
+        params.full_data,
+    )
