@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Foundation models for PDEs based on a scalable Operator Transformer"
 readme = "README.md"
 authors = [
-    { name = "Brian Staber", email = "brian.staber@gmail.com" }
+    { name = "camlab-ethz" }
 ]
 requires-python = ">=3.10"
 dependencies = [
