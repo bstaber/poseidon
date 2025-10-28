@@ -221,14 +221,16 @@ Copyright 2018- The Hugging Face team. All rights reserved.
    limitations under the License.
 """
 
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import torch
 from torch import nn
-from typing import List, Optional, Dict, Tuple, Union, Any
-from transformers.trainer import *
 from transformers import Trainer as Trainer_
 from transformers import TrainingArguments as TrainingArguments_
-from scOT.model import LayerNorm, ConditionalLayerNorm
-from dataclasses import dataclass, field
+from transformers.trainer import *
+
+from poseidon.scOT.model import ConditionalLayerNorm, LayerNorm
 
 
 @dataclass

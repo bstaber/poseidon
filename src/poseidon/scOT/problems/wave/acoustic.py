@@ -1,6 +1,7 @@
-import torch
 import h5py
-from scOT.problems.base import BaseTimeDataset
+import torch
+
+from poseidon.scOT.problems.base import BaseTimeDataset
 
 
 class Layer(BaseTimeDataset):

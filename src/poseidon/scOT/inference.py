@@ -12,19 +12,20 @@ See the --help page for more information.
 """
 
 import argparse
-import torch
-import numpy as np
-import random
-import psutil
 import os
+import random
+
+import numpy as np
 import pandas as pd
+import psutil
+import torch
 import wandb
 from transformers.trainer_utils import EvalPrediction
-from scOT.model import ScOT
-from scOT.trainer import TrainingArguments, Trainer
-from scOT.problems.base import get_dataset, BaseTimeDataset
-from scOT.metrics import relative_lp_error, lp_error
 
+from poseidon.scOT.metrics import lp_error, relative_lp_error
+from poseidon.scOT.model import ScOT
+from poseidon.scOT.problems.base import BaseTimeDataset, get_dataset
+from poseidon.scOT.trainer import Trainer, TrainingArguments
 
 SEED = 0
 torch.manual_seed(SEED)
@@ -334,6 +335,485 @@ def remove_underscore_dict(d):
     return {key[1:] if key.startswith("_") else key: value for key, value in d.items()}
 
 
+def main(
+    ar_steps: list,
+    final_time: float,
+    initial_time: float,
+    model_path: str,
+    data_path: str,
+    dataset: str,
+    batch_size: int,
+    mode: str,
+    file: str,
+    save_n_samples: int,
+    resolutions: int,
+    wandb_project: str,
+    wandb_entity: str,
+    wandb_sweep_id: str,
+    ckpt_dir: str,
+    exclude_dataset: str,
+    exclusively_evaluate_dataset: str,
+    just_velocities: bool,
+    allow_failed: bool,
+    append_time: bool,
+    num_trajectories: int,
+    full_data: bool,
+):
+    if len(ar_steps) == 1:
+        ar_steps = ar_steps[0]
+        ar_steps = ar_steps
+    else:
+        ar_steps = ar_steps
+        ar_steps = [step / (final_time - initial_time) for step in ar_steps]
+    dataset_kwargs = {}
+    if just_velocities:
+        dataset_kwargs["just_velocities"] = True
+    if mode == "save_samples":
+        dataset = get_test_set(
+            dataset,
+            data_path,
+            initial_time,
+            final_time,
+            dataset_kwargs,
+        )
+        trainer = get_trainer(model_path, batch_size, dataset)
+        inputs = get_first_n_inputs(dataset, save_n_samples)
+        outputs, labels, _ = rollout(trainer, dataset, ar_steps=ar_steps)
+        np.save(
+            file + "/" + dataset.replace(".", "-") + "/" + "inputs.npy",
+            inputs.cpu().numpy(),
+        )
+        np.save(
+            file + "/" + dataset.replace(".", "-") + "/" + "labels.npy",
+            labels[:save_n_samples],
+        )
+        np.save(
+            file + "/" + dataset.replace(".", "-") + "/" + "outputs.npy",
+            outputs[:save_n_samples],
+        )
+    elif mode == "save_samples_sweep":
+        api = wandb.Api()
+        sweep = api.sweep(wandb_entity + "/" + wandb_project + "/" + wandb_sweep_id)
+        for run in sweep.runs:
+            if run.state == "finished" or (allow_failed and run.state == "failed"):
+                dset_name = run.config["dataset"]
+                if run.config["num_trajectories"] != num_trajectories:
+                    continue
+                if dset_name in exclude_dataset:
+                    continue
+                if (
+                    len(exclusively_evaluate_dataset) > 0
+                    and dset_name not in exclusively_evaluate_dataset
+                ):
+                    continue
+                num_trajectories = run.config["num_trajectories"]
+                ckpt_dir = (
+                    ckpt_dir
+                    + "/"
+                    + wandb_project
+                    + "/"
+                    + wandb_sweep_id
+                    + "/"
+                    + run.name
+                )
+                items = os.listdir(ckpt_dir)
+                dirs = [
+                    item
+                    for item in items
+                    if os.path.isdir(os.path.join(ckpt_dir, item))
+                ]
+                if len(dirs) > 1:
+                    print(
+                        "WARNING: more than one checkpoint in run directory " + ckpt_dir
+                    )
+                    print("choosing " + dirs[0])
+                model_path = os.path.join(ckpt_dir, dirs[0])
+                dataset = get_test_set(
+                    dset_name,
+                    data_path,
+                    initial_time,
+                    final_time,
+                    dataset_kwargs,
+                )
+                trainer = get_trainer(model_path, batch_size, dataset)
+                inputs = get_first_n_inputs(dataset, save_n_samples)
+                outputs, labels, _ = rollout(trainer, dataset, ar_steps=ar_steps)
+                if not os.path.exists(file + "/" + dset_name.replace(".", "-")):
+                    os.makedirs(file + "/" + dset_name.replace(".", "-"))
+                if not os.path.exists(
+                    file
+                    + "/"
+                    + dset_name.replace(".", "-")
+                    + "/"
+                    + str(num_trajectories)
+                ):
+                    os.makedirs(
+                        file
+                        + "/"
+                        + dset_name.replace(".", "-")
+                        + "/"
+                        + str(num_trajectories)
+                    )
+                np.save(
+                    file
+                    + "/"
+                    + dset_name.replace(".", "-")
+                    + "/"
+                    + str(num_trajectories)
+                    + "/inputs.npy",
+                    inputs.cpu().numpy(),
+                )
+                np.save(
+                    file
+                    + "/"
+                    + dset_name.replace(".", "-")
+                    + "/"
+                    + str(num_trajectories)
+                    + "/labels.npy",
+                    labels[:save_n_samples],
+                )
+                np.save(
+                    file
+                    + "/"
+                    + dset_name.replace(".", "-")
+                    + "/"
+                    + str(num_trajectories)
+                    + "/"
+                    + "outputs.npy",
+                    outputs[:save_n_samples],
+                )
+    else:
+        if mode == "eval":
+            dataset = get_test_set(
+                dataset,
+                data_path,
+                initial_time,
+                final_time,
+                dataset_kwargs,
+            )
+            trainer = get_trainer(
+                model_path,
+                batch_size,
+                dataset,
+                full_data=full_data,
+            )
+            _, _, metrics = rollout(
+                trainer,
+                dataset,
+                ar_steps=ar_steps,
+                output_all_steps=False,
+            )
+            data = {
+                "dataset": dataset,
+                "initial_time": initial_time,
+                "final_time": final_time,
+                "ar_steps": ar_steps,
+                **metrics,
+            }
+            data = [remove_underscore_dict(data)]
+        elif mode == "eval_sweep":
+            api = wandb.Api()
+            sweep = api.sweep(wandb_entity + "/" + wandb_project + "/" + wandb_sweep_id)
+            data = []
+            for run in sweep.runs:
+                if run.state == "finished" or (allow_failed and run.state == "failed"):
+                    dset_name = (
+                        run.config["dataset"]
+                        if not append_time
+                        else run.config["dataset"] + ".time"
+                    )
+                    if dset_name in exclude_dataset:
+                        continue
+                    if (
+                        len(exclusively_evaluate_dataset) > 0
+                        and dset_name not in exclusively_evaluate_dataset
+                    ):
+                        continue
+                    num_trajectories = run.config["num_trajectories"]
+                    ckpt_dir = (
+                        ckpt_dir
+                        + "/"
+                        + wandb_project
+                        + "/"
+                        + wandb_sweep_id
+                        + "/"
+                        + run.name
+                    )
+                    items = os.listdir(ckpt_dir)
+                    dirs = [
+                        item
+                        for item in items
+                        if os.path.isdir(os.path.join(ckpt_dir, item))
+                    ]
+                    if len(dirs) > 1:
+                        print(
+                            "WARNING: more than one checkpoint in run directory "
+                            + ckpt_dir
+                        )
+                        print("choosing " + dirs[0])
+                        continue
+                    if len(dirs) == 0:
+                        continue
+                    model_path = os.path.join(ckpt_dir, dirs[0])
+                    dataset = get_test_set(
+                        dset_name,
+                        data_path,
+                        initial_time,
+                        final_time,
+                        dataset_kwargs,
+                    )
+                    trainer = get_trainer(
+                        model_path,
+                        batch_size,
+                        dataset,
+                        full_data=full_data,
+                    )
+                    _, _, metrics = rollout(
+                        trainer,
+                        dataset,
+                        ar_steps=ar_steps,
+                        output_all_steps=False,
+                    )
+                    data.append(
+                        remove_underscore_dict(
+                            {
+                                "dataset": dset_name,
+                                "num_trajectories": num_trajectories,
+                                "initial_time": initial_time,
+                                "final_time": final_time,
+                                "ar_steps": ar_steps,
+                                **metrics,
+                            }
+                        )
+                    )
+        elif mode == "eval_accumulation_error":
+            dataset = get_test_set(
+                dataset,
+                data_path,
+                initial_time,
+                final_time,
+                dataset_kwargs,
+            )
+            trainer = get_trainer(
+                model_path,
+                batch_size,
+                dataset,
+                output_all_steps=True,
+                full_data=full_data,
+            )
+            predictions, _, _ = rollout(
+                trainer,
+                dataset,
+                ar_steps=ar_steps,
+                output_all_steps=True,
+            )
+            labels = get_trajectories(
+                dataset,
+                data_path,
+                ar_steps,
+                initial_time,
+                final_time,
+                dataset_kwargs,
+            )
+
+            def compute_metrics(eval_preds):
+                channel_list = dataset.channel_slice_list
+
+                def get_relative_statistics(errors):
+                    median_error = np.median(errors, axis=0)
+                    mean_error = np.mean(errors, axis=0)
+                    std_error = np.std(errors, axis=0)
+                    min_error = np.min(errors, axis=0)
+                    max_error = np.max(errors, axis=0)
+                    return {
+                        "median_relative_l1_error": median_error,
+                        "mean_relative_l1_error": mean_error,
+                        "std_relative_l1_error": std_error,
+                        "min_relative_l1_error": min_error,
+                        "max_relative_l1_error": max_error,
+                    }
+
+                def get_statistics(errors):
+                    median_error = np.median(errors, axis=0)
+                    mean_error = np.mean(errors, axis=0)
+                    std_error = np.std(errors, axis=0)
+                    min_error = np.min(errors, axis=0)
+                    max_error = np.max(errors, axis=0)
+                    return {
+                        "median_l1_error": median_error,
+                        "mean_l1_error": mean_error,
+                        "std_l1_error": std_error,
+                        "min_l1_error": min_error,
+                        "max_l1_error": max_error,
+                    }
+
+                relative_errors = [
+                    relative_lp_error(
+                        eval_preds.predictions[
+                            :, channel_list[i] : channel_list[i + 1]
+                        ],
+                        eval_preds.label_ids[:, channel_list[i] : channel_list[i + 1]],
+                        p=1,
+                        return_percent=True,
+                    )
+                    for i in range(len(channel_list) - 1)
+                ]
+
+                errors = [
+                    lp_error(
+                        eval_preds.predictions[
+                            :, channel_list[i] : channel_list[i + 1]
+                        ],
+                        eval_preds.label_ids[:, channel_list[i] : channel_list[i + 1]],
+                        p=1,
+                    )
+                    for i in range(len(channel_list) - 1)
+                ]
+
+                relative_error_statistics = [
+                    get_relative_statistics(relative_errors[i])
+                    for i in range(len(channel_list) - 1)
+                ]
+
+                error_statistics = [
+                    get_statistics(errors[i]) for i in range(len(channel_list) - 1)
+                ]
+
+                if dataset.output_dim == 1:
+                    relative_error_statistics = relative_error_statistics[0]
+                    error_statistics = error_statistics[0]
+                    if full_data:
+                        relative_error_statistics["relative_full_data"] = (
+                            relative_errors[0].tolist()
+                        )
+                        error_statistics["full_data"] = errors[0].tolist()
+                    return {**relative_error_statistics, **error_statistics}
+                else:
+                    mean_over_relative_means = np.mean(
+                        np.array(
+                            [
+                                stats["mean_relative_l1_error"]
+                                for stats in relative_error_statistics
+                            ]
+                        ),
+                        axis=0,
+                    )
+                    mean_over_relative_medians = np.mean(
+                        np.array(
+                            [
+                                stats["median_relative_l1_error"]
+                                for stats in relative_error_statistics
+                            ]
+                        ),
+                        axis=0,
+                    )
+                    mean_over_means = np.mean(
+                        np.array(
+                            [stats["mean_l1_error"] for stats in error_statistics]
+                        ),
+                        axis=0,
+                    )
+                    mean_over_medians = np.mean(
+                        np.array(
+                            [stats["median_l1_error"] for stats in error_statistics]
+                        ),
+                        axis=0,
+                    )
+
+                    error_statistics_ = {
+                        "mean_relative_l1_error": mean_over_relative_means,
+                        "mean_over_median_relative_l1_error": mean_over_relative_medians,
+                        "mean_l1_error": mean_over_means,
+                        "mean_over_median_l1_error": mean_over_medians,
+                    }
+                    #!! The above is different from train and finetune (here mean_relative_l1_error is mean over medians instead of mean over means)
+                    for i, stats in enumerate(relative_error_statistics):
+                        for key, value in stats.items():
+                            error_statistics_[
+                                dataset.printable_channel_description[i] + "/" + key
+                            ] = value
+                            if full_data:
+                                error_statistics_[
+                                    dataset.printable_channel_description[i]
+                                    + "/"
+                                    + "relative_full_data"
+                                ] = relative_errors[i].tolist()
+                    for i, stats in enumerate(error_statistics):
+                        for key, value in stats.items():
+                            error_statistics_[
+                                dataset.printable_channel_description[i] + "/" + key
+                            ] = value
+                            if full_data:
+                                error_statistics_[
+                                    dataset.printable_channel_description[i]
+                                    + "/"
+                                    + "full_data"
+                                ] = errors[i].tolist()
+                    return error_statistics_
+
+            data = []
+            for step in range(predictions.shape[1]):
+                metrics = compute_metrics(
+                    EvalPrediction(predictions[:, step], labels[:, step].cpu().numpy())
+                )
+                if isinstance(ar_steps, int):
+                    delta = (final_time - initial_time) // ar_steps
+                else:
+                    delta = ar_steps[step]
+                data.append(
+                    remove_underscore_dict(
+                        {
+                            "dataset": dataset,
+                            "initial_time": initial_time + step * delta,
+                            "final_time": initial_time + (step + 1) * delta,
+                            **metrics,
+                        }
+                    )
+                )
+        elif mode == "eval_resolutions":
+            data = []
+            for resolution in resolutions:
+                dataset_kwargs = {"resolution": resolution}
+                dataset = get_test_set(
+                    dataset,
+                    data_path,
+                    initial_time,
+                    final_time,
+                    dataset_kwargs,
+                )
+                trainer = get_trainer(
+                    model_path,
+                    batch_size,
+                    dataset,
+                    full_data=full_data,
+                )
+                _, _, metrics = rollout(
+                    trainer,
+                    dataset,
+                    ar_steps=ar_steps,
+                    output_all_steps=False,
+                )
+                data.append(
+                    remove_underscore_dict(
+                        {
+                            "dataset": dataset,
+                            "initial_time": initial_time,
+                            "final_time": final_time,
+                            "ar_steps": ar_steps,
+                            "resolution": resolution,
+                            **metrics,
+                        }
+                    )
+                )
+
+        if os.path.exists(file):
+            df = pd.read_csv(file)
+        else:
+            df = pd.DataFrame()
+        df = pd.concat([df, pd.DataFrame(data)], ignore_index=True)
+        df.to_csv(file, index=False)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Do different evaluations for a model, see --mode."
@@ -477,474 +957,28 @@ if __name__ == "__main__":
         help="Filter runs for number of training trajectories. Only relevant if mode==eval_sweep or save_samples_sweep.",
     )
     params = parser.parse_args()
-    if len(params.ar_steps) == 1:
-        params.ar_steps = params.ar_steps[0]
-        ar_steps = params.ar_steps
-    else:
-        ar_steps = params.ar_steps
-        params.ar_steps = [
-            step / (params.final_time - params.initial_time) for step in params.ar_steps
-        ]
-    dataset_kwargs = {}
-    if params.just_velocities:
-        dataset_kwargs["just_velocities"] = True
-    if params.mode == "save_samples":
-        dataset = get_test_set(
-            params.dataset,
-            params.data_path,
-            params.initial_time,
-            params.final_time,
-            dataset_kwargs,
-        )
-        trainer = get_trainer(params.model_path, params.batch_size, dataset)
-        inputs = get_first_n_inputs(dataset, params.save_n_samples)
-        outputs, labels, _ = rollout(trainer, dataset, ar_steps=params.ar_steps)
-        np.save(
-            params.file + "/" + params.dataset.replace(".", "-") + "/" + "inputs.npy",
-            inputs.cpu().numpy(),
-        )
-        np.save(
-            params.file + "/" + params.dataset.replace(".", "-") + "/" + "labels.npy",
-            labels[: params.save_n_samples],
-        )
-        np.save(
-            params.file + "/" + params.dataset.replace(".", "-") + "/" + "outputs.npy",
-            outputs[: params.save_n_samples],
-        )
-    elif params.mode == "save_samples_sweep":
-        api = wandb.Api()
-        sweep = api.sweep(
-            params.wandb_entity
-            + "/"
-            + params.wandb_project
-            + "/"
-            + params.wandb_sweep_id
-        )
-        for run in sweep.runs:
-            if run.state == "finished" or (
-                params.allow_failed and run.state == "failed"
-            ):
-                dset_name = run.config["dataset"]
-                if run.config["num_trajectories"] != params.num_trajectories:
-                    continue
-                if dset_name in params.exclude_dataset:
-                    continue
-                if (
-                    len(params.exclusively_evaluate_dataset) > 0
-                    and dset_name not in params.exclusively_evaluate_dataset
-                ):
-                    continue
-                num_trajectories = run.config["num_trajectories"]
-                ckpt_dir = (
-                    params.ckpt_dir
-                    + "/"
-                    + params.wandb_project
-                    + "/"
-                    + params.wandb_sweep_id
-                    + "/"
-                    + run.name
-                )
-                items = os.listdir(ckpt_dir)
-                dirs = [
-                    item
-                    for item in items
-                    if os.path.isdir(os.path.join(ckpt_dir, item))
-                ]
-                if len(dirs) > 1:
-                    print(
-                        "WARNING: more than one checkpoint in run directory " + ckpt_dir
-                    )
-                    print("choosing " + dirs[0])
-                model_path = os.path.join(ckpt_dir, dirs[0])
-                dataset = get_test_set(
-                    dset_name,
-                    params.data_path,
-                    params.initial_time,
-                    params.final_time,
-                    dataset_kwargs,
-                )
-                trainer = get_trainer(model_path, params.batch_size, dataset)
-                inputs = get_first_n_inputs(dataset, params.save_n_samples)
-                outputs, labels, _ = rollout(trainer, dataset, ar_steps=params.ar_steps)
-                if not os.path.exists(params.file + "/" + dset_name.replace(".", "-")):
-                    os.makedirs(params.file + "/" + dset_name.replace(".", "-"))
-                if not os.path.exists(
-                    params.file
-                    + "/"
-                    + dset_name.replace(".", "-")
-                    + "/"
-                    + str(num_trajectories)
-                ):
-                    os.makedirs(
-                        params.file
-                        + "/"
-                        + dset_name.replace(".", "-")
-                        + "/"
-                        + str(num_trajectories)
-                    )
-                np.save(
-                    params.file
-                    + "/"
-                    + dset_name.replace(".", "-")
-                    + "/"
-                    + str(num_trajectories)
-                    + "/inputs.npy",
-                    inputs.cpu().numpy(),
-                )
-                np.save(
-                    params.file
-                    + "/"
-                    + dset_name.replace(".", "-")
-                    + "/"
-                    + str(num_trajectories)
-                    + "/labels.npy",
-                    labels[: params.save_n_samples],
-                )
-                np.save(
-                    params.file
-                    + "/"
-                    + dset_name.replace(".", "-")
-                    + "/"
-                    + str(num_trajectories)
-                    + "/"
-                    + "outputs.npy",
-                    outputs[: params.save_n_samples],
-                )
-    else:
-        if params.mode == "eval":
-            dataset = get_test_set(
-                params.dataset,
-                params.data_path,
-                params.initial_time,
-                params.final_time,
-                dataset_kwargs,
-            )
-            trainer = get_trainer(
-                params.model_path,
-                params.batch_size,
-                dataset,
-                full_data=params.full_data,
-            )
-            _, _, metrics = rollout(
-                trainer,
-                dataset,
-                ar_steps=params.ar_steps,
-                output_all_steps=False,
-            )
-            data = {
-                "dataset": params.dataset,
-                "initial_time": params.initial_time,
-                "final_time": params.final_time,
-                "ar_steps": ar_steps,
-                **metrics,
-            }
-            data = [remove_underscore_dict(data)]
-        elif params.mode == "eval_sweep":
-            api = wandb.Api()
-            sweep = api.sweep(
-                params.wandb_entity
-                + "/"
-                + params.wandb_project
-                + "/"
-                + params.wandb_sweep_id
-            )
-            data = []
-            for run in sweep.runs:
-                if run.state == "finished" or (
-                    params.allow_failed and run.state == "failed"
-                ):
-                    dset_name = (
-                        run.config["dataset"]
-                        if not params.append_time
-                        else run.config["dataset"] + ".time"
-                    )
-                    if dset_name in params.exclude_dataset:
-                        continue
-                    if (
-                        len(params.exclusively_evaluate_dataset) > 0
-                        and dset_name not in params.exclusively_evaluate_dataset
-                    ):
-                        continue
-                    num_trajectories = run.config["num_trajectories"]
-                    ckpt_dir = (
-                        params.ckpt_dir
-                        + "/"
-                        + params.wandb_project
-                        + "/"
-                        + params.wandb_sweep_id
-                        + "/"
-                        + run.name
-                    )
-                    items = os.listdir(ckpt_dir)
-                    dirs = [
-                        item
-                        for item in items
-                        if os.path.isdir(os.path.join(ckpt_dir, item))
-                    ]
-                    if len(dirs) > 1:
-                        print(
-                            "WARNING: more than one checkpoint in run directory "
-                            + ckpt_dir
-                        )
-                        print("choosing " + dirs[0])
-                        continue
-                    if len(dirs) == 0:
-                        continue
-                    model_path = os.path.join(ckpt_dir, dirs[0])
-                    dataset = get_test_set(
-                        dset_name,
-                        params.data_path,
-                        params.initial_time,
-                        params.final_time,
-                        dataset_kwargs,
-                    )
-                    trainer = get_trainer(
-                        model_path,
-                        params.batch_size,
-                        dataset,
-                        full_data=params.full_data,
-                    )
-                    _, _, metrics = rollout(
-                        trainer,
-                        dataset,
-                        ar_steps=params.ar_steps,
-                        output_all_steps=False,
-                    )
-                    data.append(
-                        remove_underscore_dict(
-                            {
-                                "dataset": dset_name,
-                                "num_trajectories": num_trajectories,
-                                "initial_time": params.initial_time,
-                                "final_time": params.final_time,
-                                "ar_steps": ar_steps,
-                                **metrics,
-                            }
-                        )
-                    )
-        elif params.mode == "eval_accumulation_error":
-            dataset = get_test_set(
-                params.dataset,
-                params.data_path,
-                params.initial_time,
-                params.final_time,
-                dataset_kwargs,
-            )
-            trainer = get_trainer(
-                params.model_path,
-                params.batch_size,
-                dataset,
-                output_all_steps=True,
-                full_data=params.full_data,
-            )
-            predictions, _, _ = rollout(
-                trainer,
-                dataset,
-                ar_steps=params.ar_steps,
-                output_all_steps=True,
-            )
-            labels = get_trajectories(
-                params.dataset,
-                params.data_path,
-                params.ar_steps,
-                params.initial_time,
-                params.final_time,
-                dataset_kwargs,
-            )
 
-            def compute_metrics(eval_preds):
-                channel_list = dataset.channel_slice_list
-
-                def get_relative_statistics(errors):
-                    median_error = np.median(errors, axis=0)
-                    mean_error = np.mean(errors, axis=0)
-                    std_error = np.std(errors, axis=0)
-                    min_error = np.min(errors, axis=0)
-                    max_error = np.max(errors, axis=0)
-                    return {
-                        "median_relative_l1_error": median_error,
-                        "mean_relative_l1_error": mean_error,
-                        "std_relative_l1_error": std_error,
-                        "min_relative_l1_error": min_error,
-                        "max_relative_l1_error": max_error,
-                    }
-
-                def get_statistics(errors):
-                    median_error = np.median(errors, axis=0)
-                    mean_error = np.mean(errors, axis=0)
-                    std_error = np.std(errors, axis=0)
-                    min_error = np.min(errors, axis=0)
-                    max_error = np.max(errors, axis=0)
-                    return {
-                        "median_l1_error": median_error,
-                        "mean_l1_error": mean_error,
-                        "std_l1_error": std_error,
-                        "min_l1_error": min_error,
-                        "max_l1_error": max_error,
-                    }
-
-                relative_errors = [
-                    relative_lp_error(
-                        eval_preds.predictions[
-                            :, channel_list[i] : channel_list[i + 1]
-                        ],
-                        eval_preds.label_ids[:, channel_list[i] : channel_list[i + 1]],
-                        p=1,
-                        return_percent=True,
-                    )
-                    for i in range(len(channel_list) - 1)
-                ]
-
-                errors = [
-                    lp_error(
-                        eval_preds.predictions[
-                            :, channel_list[i] : channel_list[i + 1]
-                        ],
-                        eval_preds.label_ids[:, channel_list[i] : channel_list[i + 1]],
-                        p=1,
-                    )
-                    for i in range(len(channel_list) - 1)
-                ]
-
-                relative_error_statistics = [
-                    get_relative_statistics(relative_errors[i])
-                    for i in range(len(channel_list) - 1)
-                ]
-
-                error_statistics = [
-                    get_statistics(errors[i]) for i in range(len(channel_list) - 1)
-                ]
-
-                if dataset.output_dim == 1:
-                    relative_error_statistics = relative_error_statistics[0]
-                    error_statistics = error_statistics[0]
-                    if params.full_data:
-                        relative_error_statistics["relative_full_data"] = (
-                            relative_errors[0].tolist()
-                        )
-                        error_statistics["full_data"] = errors[0].tolist()
-                    return {**relative_error_statistics, **error_statistics}
-                else:
-                    mean_over_relative_means = np.mean(
-                        np.array(
-                            [
-                                stats["mean_relative_l1_error"]
-                                for stats in relative_error_statistics
-                            ]
-                        ),
-                        axis=0,
-                    )
-                    mean_over_relative_medians = np.mean(
-                        np.array(
-                            [
-                                stats["median_relative_l1_error"]
-                                for stats in relative_error_statistics
-                            ]
-                        ),
-                        axis=0,
-                    )
-                    mean_over_means = np.mean(
-                        np.array(
-                            [stats["mean_l1_error"] for stats in error_statistics]
-                        ),
-                        axis=0,
-                    )
-                    mean_over_medians = np.mean(
-                        np.array(
-                            [stats["median_l1_error"] for stats in error_statistics]
-                        ),
-                        axis=0,
-                    )
-
-                    error_statistics_ = {
-                        "mean_relative_l1_error": mean_over_relative_means,
-                        "mean_over_median_relative_l1_error": mean_over_relative_medians,
-                        "mean_l1_error": mean_over_means,
-                        "mean_over_median_l1_error": mean_over_medians,
-                    }
-                    #!! The above is different from train and finetune (here mean_relative_l1_error is mean over medians instead of mean over means)
-                    for i, stats in enumerate(relative_error_statistics):
-                        for key, value in stats.items():
-                            error_statistics_[
-                                dataset.printable_channel_description[i] + "/" + key
-                            ] = value
-                            if params.full_data:
-                                error_statistics_[
-                                    dataset.printable_channel_description[i]
-                                    + "/"
-                                    + "relative_full_data"
-                                ] = relative_errors[i].tolist()
-                    for i, stats in enumerate(error_statistics):
-                        for key, value in stats.items():
-                            error_statistics_[
-                                dataset.printable_channel_description[i] + "/" + key
-                            ] = value
-                            if params.full_data:
-                                error_statistics_[
-                                    dataset.printable_channel_description[i]
-                                    + "/"
-                                    + "full_data"
-                                ] = errors[i].tolist()
-                    return error_statistics_
-
-            data = []
-            for step in range(predictions.shape[1]):
-                metrics = compute_metrics(
-                    EvalPrediction(predictions[:, step], labels[:, step].cpu().numpy())
-                )
-                if isinstance(params.ar_steps, int):
-                    delta = (params.final_time - params.initial_time) // params.ar_steps
-                else:
-                    delta = params.ar_steps[step]
-                data.append(
-                    remove_underscore_dict(
-                        {
-                            "dataset": params.dataset,
-                            "initial_time": params.initial_time + step * delta,
-                            "final_time": params.initial_time + (step + 1) * delta,
-                            **metrics,
-                        }
-                    )
-                )
-        elif params.mode == "eval_resolutions":
-            data = []
-            for resolution in params.resolutions:
-                dataset_kwargs = {"resolution": resolution}
-                dataset = get_test_set(
-                    params.dataset,
-                    params.data_path,
-                    params.initial_time,
-                    params.final_time,
-                    dataset_kwargs,
-                )
-                trainer = get_trainer(
-                    params.model_path,
-                    params.batch_size,
-                    dataset,
-                    full_data=params.full_data,
-                )
-                _, _, metrics = rollout(
-                    trainer,
-                    dataset,
-                    ar_steps=params.ar_steps,
-                    output_all_steps=False,
-                )
-                data.append(
-                    remove_underscore_dict(
-                        {
-                            "dataset": params.dataset,
-                            "initial_time": params.initial_time,
-                            "final_time": params.final_time,
-                            "ar_steps": ar_steps,
-                            "resolution": resolution,
-                            **metrics,
-                        }
-                    )
-                )
-
-        if os.path.exists(params.file):
-            df = pd.read_csv(params.file)
-        else:
-            df = pd.DataFrame()
-        df = pd.concat([df, pd.DataFrame(data)], ignore_index=True)
-        df.to_csv(params.file, index=False)
+    main(
+        params.ar_steps,
+        params.final_time,
+        params.initial_time,
+        params.model_path,
+        params.data_path,
+        params.dataset,
+        params.batch_size,
+        params.mode,
+        params.file,
+        params.save_n_samples,
+        params.resolutions,
+        params.wandb_project,
+        params.wandb_entity,
+        params.wandb_sweep_id,
+        params.ckpt_dir,
+        params.exclude_dataset,
+        params.exclusively_evaluate_dataset,
+        params.just_velocities,
+        params.allow_failed,
+        params.append_time,
+        params.num_trajectories,
+        params.full_data,
+    )
