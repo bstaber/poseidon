@@ -1,3 +1,7 @@
+> [!NOTE]  
+> This is a fork of the original repository located at https://github.com/camlab-ethz/poseidon
+> The aim is to experiment and make a small library out of it.
+
 # Poseidon: Efficient Foundation Models for PDEs
 
 This is the source code for the paper [*Poseidon: Efficient Foundation Models for PDEs*](https://arxiv.org/abs/2405.19101). It also acts as a package if you want to use the models in your code.
