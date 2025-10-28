@@ -1,8 +1,10 @@
-import torch
-import h5py
 import copy
-from scOT.problems.base import BaseTimeDataset, BaseDataset
-from scOT.problems.fluids.normalization_constants import CONSTANTS
+
+import h5py
+import torch
+
+from poseidon.scOT.problems.base import BaseDataset, BaseTimeDataset
+from poseidon.scOT.problems.fluids.normalization_constants import CONSTANTS
 
 
 class Airfoil(BaseDataset):

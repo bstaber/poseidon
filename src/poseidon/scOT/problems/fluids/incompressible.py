@@ -1,9 +1,11 @@
-import torch
+import copy
+
 import h5py
 import numpy as np
-import copy
-from scOT.problems.base import BaseTimeDataset
-from scOT.problems.fluids.normalization_constants import CONSTANTS
+import torch
+
+from poseidon.scOT.problems.base import BaseTimeDataset
+from poseidon.scOT.problems.fluids.normalization_constants import CONSTANTS
 
 
 class IncompressibleBase(BaseTimeDataset):

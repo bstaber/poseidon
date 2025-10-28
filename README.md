@@ -29,7 +29,7 @@ After installation, you can import the models and use the training and inference
 To use the (pretrained) models in your own code, you can use the following code snippet (after installing):
 
 ```python
-from scOT.model import ScOT
+from poseidon.scOT.model import ScOT
 
 model = ScOT.from_pretrained("camlab-ethz/Poseidon-<MODEL_SIZE>")
 ```
@@ -39,7 +39,7 @@ This will load the pretrained model from the 🤗 Hub. `<MODEL_SIZE>` has to be 
 To finetune and replace embeddings and recovery parameters, load the model as follows:
 
 ```python
-from scOT.model import ScOT
+from poseidon.scOT.model import ScOT
 
 model = ScOT.from_pretrained("camlab-ethz/Poseidon-<MODEL_SIZE>", config=model_config, ignore_mismatched_sizes=True)
 ```

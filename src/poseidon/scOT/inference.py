@@ -12,19 +12,20 @@ See the --help page for more information.
 """
 
 import argparse
-import torch
-import numpy as np
-import random
-import psutil
 import os
+import random
+
+import numpy as np
 import pandas as pd
+import psutil
+import torch
 import wandb
 from transformers.trainer_utils import EvalPrediction
-from scOT.model import ScOT
-from scOT.trainer import TrainingArguments, Trainer
-from scOT.problems.base import get_dataset, BaseTimeDataset
-from scOT.metrics import relative_lp_error, lp_error
 
+from poseidon.scOT.metrics import lp_error, relative_lp_error
+from poseidon.scOT.model import ScOT
+from poseidon.scOT.problems.base import BaseTimeDataset, get_dataset
+from poseidon.scOT.trainer import Trainer, TrainingArguments
 
 SEED = 0
 torch.manual_seed(SEED)
@@ -334,149 +335,7 @@ def remove_underscore_dict(d):
     return {key[1:] if key.startswith("_") else key: value for key, value in d.items()}
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Do different evaluations for a model, see --mode."
-    )
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        required=False,
-        help="Model path. Not required when mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--file",
-        type=str,
-        required=True,
-        help="File to load/write to. May also be a directory to save samples.",
-    )
-    parser.add_argument(
-        "--data_path",
-        type=str,
-        required=True,
-        help="Path to data.",
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        help="Which test set to load. Not required if mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=64,
-        help="Batch size for evaluation.",
-    )
-    parser.add_argument(
-        "--full_data",
-        action="store_true",
-        help="Whether to save full data distributions.",
-    )
-    parser.add_argument(
-        "--initial_time",
-        type=int,
-        default=None,
-        help="Initial time step to start from.",
-    )
-    parser.add_argument(
-        "--final_time",
-        type=int,
-        default=None,
-        help="Final time step to end at.",
-    )
-    parser.add_argument(
-        "--ar_steps",
-        type=int,
-        nargs="+",
-        default=[1],
-        help="Number of autoregressive steps to take. A single int n is interpreted as taking n homogeneous steps, a list of ints [j_0, j_1, ...] is interpreted as taking a step of size j_i.",
-    )
-    parser.add_argument(
-        "--mode",
-        type=str,
-        choices=[
-            "save_samples",
-            "save_samples_sweep",
-            "eval",
-            "eval_sweep",
-            "eval_accumulation_error",
-            "eval_resolutions",
-        ],
-        default="eval",
-        help="Mode to run. Can be either save_samples to save n samples, save_samples_sweep, eval (to evaluate a single model), eval_sweep (to evaluate all models in a wandb sweep), eval_accumulation_error (to evaluate a model's accumulation error), eval_resolutions (to evaluate a model on different resolutions).",
-    )
-    parser.add_argument(
-        "--save_n_samples",
-        type=int,
-        default=1,
-        help="Number of samples to save. Only required for mode==save_samples or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--resolutions",
-        type=int,
-        nargs="+",
-        help="List of resolutions to evaluate. Only required for mode==eval_resolutions.",
-    )
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default="scOT",
-        help="Wandb project name. Required if mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--wandb_entity",
-        type=str,
-        required=False,
-        help="Wandb entity name. Required if mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--wandb_sweep_id",
-        type=str,
-        default=None,
-        help="Wandb sweep id. Required if mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--ckpt_dir",
-        type=str,
-        required=True,
-        help="Base checkpoint directory. Required if mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--exclude_dataset",
-        type=str,
-        nargs="+",
-        default=[],
-        help="Datasets to exclude from evaluation. Only relevant when mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--exclusively_evaluate_dataset",
-        type=str,
-        nargs="+",
-        default=[],
-        help="Datasets to exclusively evaluate. Only relevant when mode==eval_sweep or save_samples_sweep.",
-    )
-    parser.add_argument(
-        "--just_velocities",
-        action="store_true",
-        help="Use just velocities in incompressible flow data.",
-    )
-    parser.add_argument(
-        "--allow_failed",
-        action="store_true",
-        help="Allow failed runs to be taken into account with eval_sweep.",
-    )
-    parser.add_argument(
-        "--append_time",
-        action="store_true",
-        help="Append .time to dataset name for evaluation.",
-    )
-    parser.add_argument(
-        "--num_trajectories",
-        type=int,
-        default=128,
-        help="Filter runs for number of training trajectories. Only relevant if mode==eval_sweep or save_samples_sweep.",
-    )
-    params = parser.parse_args()
+def main(params):
     if len(params.ar_steps) == 1:
         params.ar_steps = params.ar_steps[0]
         ar_steps = params.ar_steps
@@ -948,3 +807,150 @@ if __name__ == "__main__":
             df = pd.DataFrame()
         df = pd.concat([df, pd.DataFrame(data)], ignore_index=True)
         df.to_csv(params.file, index=False)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Do different evaluations for a model, see --mode."
+    )
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        required=False,
+        help="Model path. Not required when mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--file",
+        type=str,
+        required=True,
+        help="File to load/write to. May also be a directory to save samples.",
+    )
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        required=True,
+        help="Path to data.",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        help="Which test set to load. Not required if mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Batch size for evaluation.",
+    )
+    parser.add_argument(
+        "--full_data",
+        action="store_true",
+        help="Whether to save full data distributions.",
+    )
+    parser.add_argument(
+        "--initial_time",
+        type=int,
+        default=None,
+        help="Initial time step to start from.",
+    )
+    parser.add_argument(
+        "--final_time",
+        type=int,
+        default=None,
+        help="Final time step to end at.",
+    )
+    parser.add_argument(
+        "--ar_steps",
+        type=int,
+        nargs="+",
+        default=[1],
+        help="Number of autoregressive steps to take. A single int n is interpreted as taking n homogeneous steps, a list of ints [j_0, j_1, ...] is interpreted as taking a step of size j_i.",
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=[
+            "save_samples",
+            "save_samples_sweep",
+            "eval",
+            "eval_sweep",
+            "eval_accumulation_error",
+            "eval_resolutions",
+        ],
+        default="eval",
+        help="Mode to run. Can be either save_samples to save n samples, save_samples_sweep, eval (to evaluate a single model), eval_sweep (to evaluate all models in a wandb sweep), eval_accumulation_error (to evaluate a model's accumulation error), eval_resolutions (to evaluate a model on different resolutions).",
+    )
+    parser.add_argument(
+        "--save_n_samples",
+        type=int,
+        default=1,
+        help="Number of samples to save. Only required for mode==save_samples or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--resolutions",
+        type=int,
+        nargs="+",
+        help="List of resolutions to evaluate. Only required for mode==eval_resolutions.",
+    )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="scOT",
+        help="Wandb project name. Required if mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        required=False,
+        help="Wandb entity name. Required if mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--wandb_sweep_id",
+        type=str,
+        default=None,
+        help="Wandb sweep id. Required if mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--ckpt_dir",
+        type=str,
+        required=True,
+        help="Base checkpoint directory. Required if mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--exclude_dataset",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Datasets to exclude from evaluation. Only relevant when mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--exclusively_evaluate_dataset",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Datasets to exclusively evaluate. Only relevant when mode==eval_sweep or save_samples_sweep.",
+    )
+    parser.add_argument(
+        "--just_velocities",
+        action="store_true",
+        help="Use just velocities in incompressible flow data.",
+    )
+    parser.add_argument(
+        "--allow_failed",
+        action="store_true",
+        help="Allow failed runs to be taken into account with eval_sweep.",
+    )
+    parser.add_argument(
+        "--append_time",
+        action="store_true",
+        help="Append .time to dataset name for evaluation.",
+    )
+    parser.add_argument(
+        "--num_trajectories",
+        type=int,
+        default=128,
+        help="Filter runs for number of training trajectories. Only relevant if mode==eval_sweep or save_samples_sweep.",
+    )
+    params = parser.parse_args()
+
+    main(params)

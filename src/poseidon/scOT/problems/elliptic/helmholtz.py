@@ -1,8 +1,10 @@
-import torch
 import os
+
 import h5py
 import numpy as np
-from scOT.problems.base import BaseDataset
+import torch
+
+from poseidon.scOT.problems.base import BaseDataset
 
 
 class Helmholtz(BaseDataset):
