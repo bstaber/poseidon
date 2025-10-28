@@ -1,6 +1,6 @@
 > [!NOTE]  
-> This is a fork of the original repository located at https://github.com/camlab-ethz/poseidon
-> The aim is to experiment and make a small library out of it.
+> This is a fork of the original repository located at https://github.com/camlab-ethz/poseidon.
+> The aim is to experiment and make a small library out of it with uv.
 
 # Poseidon: Efficient Foundation Models for PDEs
 
